@@ -2,10 +2,13 @@ from types import SimpleNamespace
 import tensorflow as tf
 import sys
 
+import os
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
 
 sys.path.append("./")
 from blocks import ConvBlock, ConvBlockTranspose
-from DataGenerator import DataGenerator
+from data.DataGenerator import DataGenerator
 
 
 class DeblurModel:
@@ -20,6 +23,9 @@ class DeblurModel:
         self.model = (
             args.model_path
         )  # TODO make model loading process `load_model(model_path) or build_model()`
+        self.checkpoint_dir = args.checkpoint_dir or None
+
+        self.use_best_weights = args.use_best_weights or False
 
     def load_model(self, model_path):
         """
@@ -33,19 +39,40 @@ class DeblurModel:
         """
         self.model.save(out_path + model_name)
 
-    def chekpoint_builder(self):
-        def chck1():
-            pass
+    def callbacks_builder(self):
+        def model_checkpoint(path):
 
-        def chck2():
-            pass
+            model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+                filepath=os.path.join(os.getcwd(), path),
+                save_weights_only=True,
+                monitor="val_accuracy",
+                mode="max",
+                verbose=20,
+                save_best_only=True,
+            )
+            return model_checkpoint_callback
+
+        def early_stopping():
+            return tf.keras.callbacks.EarlyStopping(
+                monitor="val_loss",
+                min_delta=0,
+                patience=2,
+                verbose=1,
+                mode="auto",
+                baseline=None,
+                restore_best_weights=False,
+            )
 
         def chck3():
             pass
 
-        raise NotImplementedError("No checkpoints implemnted yet")
+        early_stopping_callback = early_stopping()
+        chckpoint = model_checkpoint("./checkpoints/")
+        return [chckpoint, early_stopping_callback]
 
     def build(self, patch_size, num_layers=3):
+        print("Building model...")
+
         input = tf.keras.layers.Input((patch_size, patch_size, 3))
         # downsample
         layer1, out_concat = ConvBlock(input, "relu", 64, block_name="Conv_Level_1", padding="same")
@@ -81,7 +108,7 @@ class DeblurModel:
         # output
         output = tf.keras.layers.Conv2D(3, (1, 1), activation="sigmoid")(layer_up3)
 
-        self.model = tf.keras.Model(input, output)
+        self.model = tf.keras.Model(input, output, name="Deblur")
         return self
 
     def visualize(self, out_path):
@@ -91,30 +118,60 @@ class DeblurModel:
         print("Model visualization complete. Output path: " + out_path)
 
     def train(self):
-        train_args = dict(
+        train_args = SimpleNamespace(
             shuffle=True,
             seed=1,
-            data_path="../training_set/GOPR0372_07_00",
+            data_path="training_set/GOPR0372_07_00",
             channels=3,  # rgb
-            batch_size=1,
+            batch_size=2,
             mode="train",
+            repeat=1,
         )
-        train_args = SimpleNamespace(**train_args)
+        test_args = SimpleNamespace(
+            shuffle=True,
+            seed=1,
+            data_path="training_set/GOPR0384_11_00",
+            channels=3,  # rgb
+            batch_size=2,
+            mode="test",
+            repeat=1,
+        )
+
         train_img_generator = DataGenerator(train_args)
+        test_img_generator = DataGenerator(test_args)
+
         model = self.model
-        model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
-        model.summary()
+        model.compile(
+            optimizer="adam",
+            loss="binary_crossentropy",
+            metrics=["accuracy"],
+        )
+
+        if self.use_best_weights:
+            if not os.listdir(self.checkpoint_dir):
+                print("No checkpoint found. Please train the model first.")
+            else:
+
+                print("Best weights loaded.")
+                model.load_weights(os.path.join(os.getcwd(), self.checkpoint_dir))
+
         model.fit(
             train_img_generator(),
-            validation_data=train_img_generator(),
-            epochs=1,
+            validation_data=test_img_generator(),
+            epochs=3,
+            callbacks=self.callbacks_builder(),
         )
-        print("kkt")
 
 
 if __name__ == "__main__":
 
-    args = dict(epochs=10, batch_size=5, model_path="model_path")
+    args = dict(
+        epochs=10,
+        batch_size=5,
+        model_path="model_path",
+        checkpoint_dir="./checkpoints/",
+        use_best_weights=True,
+    )
     args = SimpleNamespace(**args)
 
     model = DeblurModel(args)

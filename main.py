@@ -3,12 +3,6 @@ from argparse import ArgumentParser
 from data.DataGenerator import DataGenerator
 
 ROOT_DIR = os.getcwd()
-# TEMPLATES_DIR = os.path.join(ROOT_DIR, "templates")
-# STATIC_DIR = os.path.join(ROOT_DIR, "static")
-# UPLOAD_DIR = os.path.join(STATIC_DIR, "uploads")
-# CROPPED_DIR = os.path.join(UPLOAD_DIR, "cropped")
-# RESULT_DIR = os.path.join(UPLOAD_DIR, "results")
-# FINISH_DIR = os.path.join(UPLOAD_DIR, "finish")
 
 
 def parse_arguments(args):
@@ -44,5 +38,6 @@ if __name__ == "__main__":
     print(args)
 
     generator = DataGenerator(args)
+    data = generator.input_generator()
 
     print("kkt")

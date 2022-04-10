@@ -28,19 +28,25 @@ class DataGenerator:
         self.channels = args.channels  # or 3
         self.batch_size = args.batch_size  # or 1
         self.mode = args.mode  # or "train"
+        self.repeat = args.repeat or 1
+        # defines the number of times the model will see the total number of images
 
         self.data_path = args.data_path
         assert os.path.isdir(self.data_path), "The data path is not a valid directory"
 
         self.dataset = self.load_dataset(
             self.data_path,
+            self.batch_size,
             self.shuffle,
             self.seed,
             self.height,
             self.width,
             self.mode,
             self.channels,
-        ).batch(self.batch_size)
+        )
+        self.dataset = self.dataset.apply(
+            tf.data.experimental.assert_cardinality(self.dataset_size * self.repeat)
+        )
 
     def __call__(self, *args, **kwds):
         """
@@ -51,9 +57,8 @@ class DataGenerator:
         return self.dataset
 
     def __len__(self):
-        epoch_size = self.dataset.cardinality().numpy()
 
-        return epoch_size if epoch_size > 0 else self.epoch_size
+        return self.dataset_size * self.repeat
 
     @staticmethod
     def dimension_modifier(*imgs):
@@ -81,9 +86,10 @@ class DataGenerator:
         patches = tf.image.random_crop(stack, size=[2, patch_size, patch_size, 3])
         return patches[0], patches[1]
 
-    @staticmethod
     def load_dataset(
+        self,
         path: str,
+        batch_size: int = 1,
         shuffle: bool = False,
         seed: int = 1,
         height: int = 720,
@@ -96,8 +102,13 @@ class DataGenerator:
 
         """
 
-        gen1, gen2 = DataGenerator.create_generators(**locals())
-        dataset = DataGenerator.combine_generators_into_dataset(gen1, gen2)
+        gen1, gen2 = DataGenerator.create_generators(
+            path, shuffle, seed, height, width, mode, channels
+        )
+        dataset = DataGenerator.combine_generators_into_dataset(gen1, gen2).batch(batch_size)
+
+        self.dataset_size = len(gen1.filenames) // batch_size
+
         return dataset
 
     @staticmethod
@@ -204,18 +215,27 @@ if __name__ == "__main__":
         shuffle=True,
         seed=1,
         data_path="training_set/GOPR0372_07_00",
-        batch_size=5,
+        batch_size=10,
         mode="train",
         channels=3,
+        repeat=2,
     )
     args = SimpleNamespace(**args)
     data_generator = DataGenerator(args)
-    for blur, sharp in data_generator().take(20):
+
+    print(
+        f"There are a total of {len(data_generator)} batches of {data_generator.batch_size} image pairs"
+    )
+    print(
+        f"Total of {len(data_generator)*data_generator.batch_size} image pairs will be fed to the model"
+    )
+    for blur, sharp in data_generator().take(5):
         f, axarr = plt.subplots(2)
         axarr[0].imshow(blur[0].numpy())
         axarr[1].imshow(sharp[0].numpy())
 
         plt.show()
+        input()
     #   for i in range(9):
     #     ax = plt.subplot(3, 3, i + 1)
     #     plt.imshow(images[i].numpy().astype("uint8"))
