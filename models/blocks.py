@@ -9,10 +9,12 @@ def ConvBlock(
     kernel_init="glorot_uniform",
     bias_init="zeros",
     padding="valid",
-    dropout_chance=0.1,
+    dropout_chance=0.3,
     block_name="ConvBlock",
 ):
     with tf.name_scope(block_name):
+
+        # first small conv block
         conv = tf.keras.layers.Conv2D(
             filters,
             kernel_size,
@@ -20,11 +22,13 @@ def ConvBlock(
             bias_initializer=bias_init,
             padding=padding,
         )(input_layer)
-        bn = tf.keras.layers.BatchNormalization()(conv)
+        bn = tf.keras.layers.BatchNormalization(axis=3)(conv)
         activation = tf.keras.layers.Activation(activation_func)(bn)
 
+        # dropout
         dropout = tf.keras.layers.Dropout(dropout_chance)(activation)
 
+        # second small conv block
         conv2 = tf.keras.layers.Conv2D(
             filters,
             kernel_size,
@@ -32,12 +36,15 @@ def ConvBlock(
             bias_initializer=bias_init,
             padding=padding,
         )(dropout)
-        bn2 = tf.keras.layers.BatchNormalization()(conv2)
-        unet_layer_out = tf.keras.layers.Activation(activation_func)(bn2)
+        bn2 = tf.keras.layers.BatchNormalization(axis=3)(conv2)
+        activation2 = tf.keras.layers.Activation(activation_func)(bn2)
 
-        max_pooling = tf.keras.layers.MaxPooling2D((2, 2))(unet_layer_out)
+        # residual wizardry
+        shortcut = tf.keras.layers.Conv2D(filters, kernel_size=(1, 1), padding=padding)(input_layer)
+        shortcut = tf.keras.layers.BatchNormalization(axis=3)(shortcut)
+        out_layer = tf.keras.layers.add([shortcut, activation2])
 
-    return max_pooling, unet_layer_out
+    return out_layer
 
 
 def ConvBlockTranspose(
@@ -49,7 +56,7 @@ def ConvBlockTranspose(
     kernel_init="glorot_uniform",
     bias_init="zeros",
     padding="valid",
-    dropout_chance=0.1,
+    dropout_chance=0.3,
     block_name="ConvBlockTranspose",
 ):
     with tf.name_scope(block_name):
@@ -59,10 +66,11 @@ def ConvBlockTranspose(
             kernel_size,
             strides=(2, 2),
             padding=padding,
+            activation="relu",
             kernel_initializer=kernel_init,
             bias_initializer=bias_init,
         )(input_layer)
-        bn = tf.keras.layers.BatchNormalization()(conv_transpose)
+        bn = tf.keras.layers.BatchNormalization(axis=3)(conv_transpose)
         activation = tf.keras.layers.Activation(activation_func)(bn)
 
         dropout = tf.keras.layers.Dropout(dropout_chance)(activation)
@@ -76,7 +84,7 @@ def ConvBlockTranspose(
             bias_initializer=bias_init,
             padding=padding,
         )(concat)
-        bn2 = tf.keras.layers.BatchNormalization()(conv)
+        bn2 = tf.keras.layers.BatchNormalization(axis=3)(conv)
         activation2 = tf.keras.layers.Activation(activation_func)(bn2)
 
         conv2 = tf.keras.layers.Conv2D(
@@ -86,7 +94,13 @@ def ConvBlockTranspose(
             bias_initializer=bias_init,
             padding=padding,
         )(activation2)
-        bn3 = tf.keras.layers.BatchNormalization()(conv2)
-        out_layer = tf.keras.layers.Activation(activation_func)(bn3)
+        bn3 = tf.keras.layers.BatchNormalization(axis=3)(conv2)
+        activation3 = tf.keras.layers.Activation(activation_func)(bn3)
+
+        shortcut = tf.keras.layers.Conv2D(filters, kernel_size=(1, 1), padding=padding)(concat)
+        shortcut = tf.keras.layers.BatchNormalization(axis=3)(shortcut)
+        shortcut = tf.keras.layers.Activation(activation_func)(shortcut)
+
+        out_layer = tf.keras.layers.add([shortcut, activation3])
 
     return out_layer
