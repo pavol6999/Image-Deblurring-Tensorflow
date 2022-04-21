@@ -4,6 +4,8 @@ from matplotlib import pyplot as plt
 import tensorflow as tf
 from datetime import datetime
 
+import wandb
+
 
 class SaveTrainedModel(tf.keras.callbacks.Callback):
     """Callback to save the model after exiting training.
@@ -60,19 +62,25 @@ class PredictImageAfterEpoch(Callback):
     At the start of training, the test dataset will yield one image pair patches. Then after each epoch, the blurred image patch will be predicted and saved.
     """
 
-    def __init__(self, image_pair):
+    def __init__(self, image_pair, wandb_enabled):
         super().__init__()
+        self.wandb_enabled = wandb_enabled
         self.blur, self.sharp = next(iter(image_pair))
         tf.keras.utils.save_img(
             os.getcwd() + f"/images/{datetime.now().strftime('%Y-%m-%d')}_blur_visualization.jpg",
             self.blur[0],
             scale=True,
         )
+
         tf.keras.utils.save_img(
             os.getcwd() + f"/images/{datetime.now().strftime('%Y-%m-%d')}_sharp_visualization.jpg",
             self.sharp[0],
             scale=True,
         )
+        if self.wandb_enabled:
+            image_blur = wandb.Image(self.blur)
+            image_sharp = wandb.Image(self.sharp)
+            wandb.log({"examples": [image_blur, image_sharp]})
 
     def write_image(self, image, epoch):
         image_to_write = np.copy(image)
@@ -81,6 +89,11 @@ class PredictImageAfterEpoch(Callback):
             image_to_write[0],
             scale=True,
         )
+        if self.wandb_enabled:
+            img = wandb.Image(
+                image_to_write, caption="f{datetime.now().strftime('%Y-%m-%d')}_predicted_epoch_{epoch}"
+            )
+            wandb.log({"predicted": img})
 
     def on_epoch_end(self, epoch, logs={}):
         deblurred_image = self.model(self.blur, training=False)

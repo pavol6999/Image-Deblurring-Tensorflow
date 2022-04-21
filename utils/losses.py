@@ -27,6 +27,13 @@ def SobelLoss(y_true, y_pred):
     return tf.keras.backend.mean(tf.keras.backend.square(sobel_true - sobel_pred))
 
 
+def SSIM_L1_Loss(y_true, y_pred):
+    ALPHA = 0.84
+    return ALPHA * SSIMLoss(y_true, y_pred) + (1 - ALPHA) * tf.keras.metrics.mean_absolute_error(
+        y_true, y_pred
+    )
+
+
 def SSIMLoss(y_true, y_pred):
     return 1 - tf.reduce_mean(tf.image.ssim(y_true, y_pred, 1.0))
 

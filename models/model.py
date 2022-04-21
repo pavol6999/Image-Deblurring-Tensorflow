@@ -11,11 +11,11 @@ import os
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
 
 sys.path.append("./")
-from blocks import ConvBlock, ConvBlockTranspose
+from models.blocks import ConvBlock, ConvBlockTranspose
 from data.DataGenerator import DataGenerator
 from utils.callbacks import PredictImageAfterEpoch, SaveTrainedModel
 from utils.metrics import PSNR, SSIM
-from utils.losses import MeanGradientError, SSIMLoss, SobelLoss
+from utils.losses import MeanGradientError, SSIM_L1_Loss, SSIMLoss, SobelLoss
 
 
 class DeblurModel:
@@ -30,36 +30,60 @@ class DeblurModel:
         self.model = (
             args.model_path
         )  # TODO make model loading process `load_model(model_path) or build_model()`
-        self.checkpoint_dir = args.checkpoint_dir or None
+        self.data = args.data
 
-        self.use_best_weights = args.continue_training or False
-        self.early_stopping = args.early_stopping or False
-        self.save_trained_model = args.save_trained_model or False
-        self.checkpoint = args.checkpoint or False
-        self.epoch_visualization = args.epoch_visualization or True
-        self.tensorboard = args.tensorboard or False
-        self.wandb = args.wandb or True
-        train_args = SimpleNamespace(
-            shuffle=True,
-            seed=1,
-            data_path="training_set/train",
-            channels=3,  # rgb
-            batch_size=4,
-            mode="train",
-            repeat=1,
-        )
-        test_args = SimpleNamespace(
-            shuffle=True,
-            seed=1,
-            data_path="training_set/test",
-            channels=3,  # rgb
-            batch_size=4,
-            mode="test",
-            repeat=1,
-        )
+        self.use_best_weights = args.continue_training
+        self.early_stopping = args.early_stopping
+        self.save_trained_model = args.save_after_train
+        self.checkpoint = args.checkpoints
+        if self.checkpoint:
+            self.checkpoint_dir = args.checkpoint_dir
+        self.epoch_visualization = args.epoch_visualization
+        self.tensorboard = args.tensorboard
+        self.wandb = args.wandb
 
-        self.train_img_generator = DataGenerator(train_args)
-        self.test_img_generator = DataGenerator(test_args)
+        self.train_phase = args.train
+        self.test_phase = args.test
+        self.visualize_phase = args.visualize
+        self.patience = args.patience
+        self.epochs = args.epochs
+        self.batch_size = args.batch_size
+
+        if self.wandb:
+            wandb.config = {
+                "learning_rate": 0.001,
+                "epochs": self.epochs,
+                "batch_size": self.batch_size,
+            }
+            os.environ["WANDB_API_KEY"] = args.wandb_api_key
+            wandb.init(entity="xkrajkovic", project="bp_deblur", sync_tensorboard=False)
+
+        if self.train_phase:
+            train_args = SimpleNamespace(
+                shuffle=True,
+                seed=69,
+                data_path=f"{self.data}/train",
+                channels=3,  # rgb
+                noise=True,
+                flip=True,
+                batch_size=self.batch_size,
+                mode="train",
+                repeat=1,
+            )
+            test_args = SimpleNamespace(
+                shuffle=True,
+                seed=69,
+                flip=False,
+                noise=False,
+                data_path=f"{self.data}/test",
+                channels=3,  # rgb
+                batch_size=self.batch_size,
+                mode="test",
+                repeat=1,
+            )
+
+            self.train_img_generator = DataGenerator(train_args)
+            self.test_img_generator = DataGenerator(test_args)
 
     def load_model(self, model_path):
         """
@@ -79,7 +103,7 @@ class DeblurModel:
             model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
                 filepath=os.path.join(os.getcwd(), path),
                 save_weights_only=True,
-                monitor="val_psnr",
+                monitor="val_ssim",
                 mode="max",
                 verbose=20,
                 save_best_only=True,
@@ -90,7 +114,7 @@ class DeblurModel:
             return tf.keras.callbacks.EarlyStopping(
                 monitor="val_loss",
                 min_delta=0,
-                patience=2,
+                patience=self.patience,
                 verbose=1,
                 mode="auto",
                 baseline=None,
@@ -121,14 +145,14 @@ class DeblurModel:
             callbacks.append(tensorboard_checkpoint_callback())
 
         if self.checkpoint:
-            callbacks.append(model_checkpoint("./checkpoints/"))
+            callbacks.append(model_checkpoint(self.checkpoint_dir))
 
         if self.save_trained_model:
             callbacks.append(SaveTrainedModel("deblurmodel", 1))
 
         if self.epoch_visualization:
             image_pair = self.train_img_generator().take(1)
-            callbacks.append(PredictImageAfterEpoch(image_pair))
+            callbacks.append(PredictImageAfterEpoch(image_pair, self.wandb))
 
         if self.wandb:
             callbacks.append(wandb_callback())
@@ -138,8 +162,10 @@ class DeblurModel:
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Building model...")
 
         input = tf.keras.layers.Input((patch_size, patch_size, 3))
+        layer0 = ConvBlock(input, "relu", 32, block_name="Conv_Level_1", padding="same")
+
         # downsample
-        layer1 = ConvBlock(input, "relu", 64, block_name="Conv_Level_1", padding="same")
+        layer1 = ConvBlock(layer0, "relu", 64, block_name="Conv_Level_1", padding="same")
         maxpooling_1 = tf.keras.layers.MaxPooling2D(pool_size=(2, 2), strides=2, padding="same")(
             layer1
         )
@@ -205,10 +231,10 @@ class DeblurModel:
     def train(self):
 
         model = self.model
-        loss = {"ssim": SSIMLoss, "sobel": SobelLoss}
+
         model.compile(
             optimizer="adam",
-            loss=SSIMLoss,
+            loss=SSIM_L1_Loss,
             metrics=["accuracy", PSNR, SSIM],
         )
 
@@ -223,7 +249,7 @@ class DeblurModel:
         model.fit(
             self.train_img_generator(),
             validation_data=self.test_img_generator(),
-            epochs=50,
+            epochs=self.epochs,
             callbacks=self.callbacks_builder(),
             use_multiprocessing=True,
             workers=4,
@@ -232,22 +258,25 @@ class DeblurModel:
 
 if __name__ == "__main__":
 
-    wandb.config = {"learning_rate": 0.001, "epochs": 50, "batch_size": 4}
-
-    wandb.init(entity="xkrajkovic", project="bp_deblur", sync_tensorboard=False)
-
     args = dict(
-        epochs=10,
-        batch_size=5,
+        epochs=50,
+        batch_size=1,
+        
+        patience=5,
+        data="training_set",
         model_path="model_path",
-        checkpoint_dir="./checkpoints/",
         continue_training=False,
-        early_stopping=False,
-        checkpoint=True,
-        save_trained_model=True,
+        early_stopping=True,
+        checkpoints=False,
+        train=True,
+        test=False,
+        visualize=False,
+        save_after_train=True,
         epoch_visualization=True,
         tensorboard=False,
         wandb=True,
+        wandb_api_key="026253717624f7e54ae9c7fdbf1c08b1267a9ec4",
+        
     )
     args = SimpleNamespace(**args)
 

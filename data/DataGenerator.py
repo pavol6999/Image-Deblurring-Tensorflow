@@ -1,9 +1,13 @@
 import os
+import random
 from matplotlib import docstring, pyplot as plt
+import numpy as np
+import math
 import tensorflow as tf
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from types import SimpleNamespace
-
+import tensorflow_addons as tfa
+from tensorflow.keras.layers import GaussianNoise
 
 # training_set/GOPR0372_07_00
 
@@ -23,6 +27,8 @@ class DataGenerator:
         self.width = 1280
         self.height = 720
         self.shuffle = args.shuffle  # or False
+        self.noise = args.noise
+        self.flip = args.flip
         self.seed = args.seed  # or 1
         self.data_path = args.data_path
         self.channels = args.channels  # or 3
@@ -60,6 +66,24 @@ class DataGenerator:
 
         return self.dataset_size * self.repeat
 
+    def vertical_flip(*imgs):
+
+        blur, sharp = imgs
+        choices = (True, False)
+        if random.choice(choices) and random.choice(choices):
+            return tf.image.flip_up_down(image=blur), tf.image.flip_up_down(image=sharp)
+        else:
+            return blur, sharp
+
+    def horizontal_flip(*imgs):
+
+        blur, sharp = imgs
+        choices = (True, False)
+        if random.choice(choices) and random.choice(choices):
+            return tf.image.flip_left_right(image=blur), tf.image.flip_left_right(image=sharp)
+        else:
+            return blur, sharp
+
     @staticmethod
     def dimension_modifier(*imgs):
         """Modifier method modifies the dimension of the input images to match the model input shape.
@@ -69,6 +93,27 @@ class DataGenerator:
         """
         img1, img2 = imgs
         return tf.squeeze(img1, axis=0), tf.squeeze(img2, axis=0)
+
+    # https://stackoverflow.com/questions/43382045/keras-realtime-augmentation-adding-noise-and-contrast
+    @staticmethod
+    def add_noise(*imgs):
+        blur, sharp = imgs
+        """Add random noise to an image"""
+        sample = GaussianNoise(0.08)
+        noisey = sample(blur, training=True)
+        return noisey, sharp
+
+    @staticmethod
+    def rotate(*imgs):
+        blur, sharp = imgs
+        choices = (90, 180)
+        angle = random.choices(choices)
+        angle = angle[0] * math.pi / 180
+        print(angle)
+        print(angle)
+        return tfa.image.rotate(blur, tf.constant(angle)), tfa.image.rotate(
+            sharp, tf.constant(angle)
+        )
 
     @staticmethod
     def create_patches(sharp_img, blur_image, patch_size):
@@ -103,9 +148,16 @@ class DataGenerator:
         """
 
         gen1, gen2 = DataGenerator.create_generators(
-            path, shuffle, seed, height, width, mode, channels
+            path,
+            shuffle,
+            seed,
+            height,
+            width,
+            mode,
+            channels,
+            self.flip,
         )
-        dataset = DataGenerator.combine_generators_into_dataset(gen1, gen2).batch(batch_size)
+        dataset = self.combine_generators_into_dataset(gen1, gen2).batch(batch_size)
 
         self.dataset_size = len(gen1.filenames) // batch_size
 
@@ -120,6 +172,7 @@ class DataGenerator:
         width: int = 1280,
         mode: str = "train",
         channels: int = 3,
+        flip=False,
     ):
         """_summary_
 
@@ -135,10 +188,22 @@ class DataGenerator:
         Returns:
             _type_: _description_
         """
+        if mode == "train":
 
-        BlurredDataGenerator = ImageDataGenerator(rescale=1.0 / 255.0)
-        SharpDataGenerator = ImageDataGenerator(rescale=1.0 / 255.0)
+            BlurredDataGenerator = ImageDataGenerator(
+                rescale=1.0 / 255.0, horizontal_flip=flip, vertical_flip=flip
+            )
+            SharpDataGenerator = ImageDataGenerator(
+                rescale=1.0 / 255.0, horizontal_flip=flip, vertical_flip=flip
+            )
+        else:
 
+            BlurredDataGenerator = ImageDataGenerator(
+                rescale=1.0 / 255.0,
+            )
+            SharpDataGenerator = ImageDataGenerator(
+                rescale=1.0 / 255.0,
+            )
         BlurImgGenerator = BlurredDataGenerator.flow_from_directory(
             f"{path}/blur",
             seed=seed,
@@ -166,7 +231,7 @@ class DataGenerator:
         return BlurImgGenerator, SharpImgGenerator
 
     @staticmethod
-    def preprocess_dataset(data):
+    def preprocess_dataset(data, noise):
         """_summary_
 
         Args:
@@ -178,16 +243,37 @@ class DataGenerator:
         dataset = data.map(
             DataGenerator.dimension_modifier, num_parallel_calls=tf.data.experimental.AUTOTUNE
         )
+
         dataset = dataset.map(
-            lambda sharp_image, blur_image: DataGenerator.create_patches(
-                sharp_image, blur_image, 256
+            lambda blur_image, sharp_image: DataGenerator.create_patches(
+                blur_image, sharp_image, 256
             )
         )
 
+        if noise:
+            dataset = dataset.map(
+                DataGenerator.add_noise,
+                num_parallel_calls=tf.data.experimental.AUTOTUNE,
+            )
+        # if rotate:
+        #     choices = (True, False)
+        #     if  rotate and random.choice(choices):
+        #         dataset = dataset.map(
+        #             DataGenerator.rotate,
+        #             num_parallel_calls=tf.data.experimental.AUTOTUNE,
+        #         )
+        # if flip:
+        #     # dataset = dataset.map(
+        #     #     DataGenerator.horizontal_flip,
+        #     #     num_parallel_calls=tf.data.experimental.AUTOTUNE,
+        #     # )
+        #     dataset = dataset.map(
+        #         DataGenerator.vertical_flip,
+        #         num_parallel_calls=tf.data.experimental.AUTOTUNE,
+        #     )
         return dataset
 
-    @staticmethod
-    def combine_generators_into_dataset(gen1, gen2):
+    def combine_generators_into_dataset(self, gen1, gen2):
         """Combines two generators into one preprocessed dataset.
 
         Args:
@@ -206,7 +292,7 @@ class DataGenerator:
                 tf.TensorSpec(shape=(1, None, None, 3), dtype=tf.float32),
             ),
         )
-        dataset = DataGenerator.preprocess_dataset(dataset)
+        dataset = DataGenerator.preprocess_dataset(dataset, self.noise)
         return dataset
 
 
@@ -214,10 +300,12 @@ if __name__ == "__main__":
     args = dict(
         shuffle=True,
         seed=1,
-        data_path="training_set/GOPR0372_07_00",
+        data_path="training_set/train",
         batch_size=10,
         mode="train",
+        noise=True,
         channels=3,
+        flip=True,
         repeat=2,
     )
     args = SimpleNamespace(**args)
@@ -229,7 +317,7 @@ if __name__ == "__main__":
     print(
         f"Total of {len(data_generator)*data_generator.batch_size} image pairs will be fed to the model"
     )
-    for blur, sharp in data_generator().take(5):
+    for blur, sharp in data_generator().take(20):
         f, axarr = plt.subplots(2)
         axarr[0].imshow(blur[0].numpy())
         axarr[1].imshow(sharp[0].numpy())
