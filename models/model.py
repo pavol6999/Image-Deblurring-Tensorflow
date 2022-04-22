@@ -260,8 +260,7 @@ if __name__ == "__main__":
 
     args = dict(
         epochs=50,
-        batch_size=1,
-        
+        batch_size=4,
         patience=5,
         data="training_set",
         model_path="model_path",
@@ -276,7 +275,6 @@ if __name__ == "__main__":
         tensorboard=False,
         wandb=True,
         wandb_api_key="026253717624f7e54ae9c7fdbf1c08b1267a9ec4",
-        
     )
     args = SimpleNamespace(**args)
 

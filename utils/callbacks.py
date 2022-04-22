@@ -78,8 +78,8 @@ class PredictImageAfterEpoch(Callback):
             scale=True,
         )
         if self.wandb_enabled:
-            image_blur = wandb.Image(self.blur)
-            image_sharp = wandb.Image(self.sharp)
+            image_blur = wandb.Image(self.blur[0])
+            image_sharp = wandb.Image(self.sharp[0])
             wandb.log({"examples": [image_blur, image_sharp]})
 
     def write_image(self, image, epoch):
@@ -91,7 +91,8 @@ class PredictImageAfterEpoch(Callback):
         )
         if self.wandb_enabled:
             img = wandb.Image(
-                image_to_write, caption="f{datetime.now().strftime('%Y-%m-%d')}_predicted_epoch_{epoch}"
+                image_to_write[0],
+                caption="f{datetime.now().strftime('%Y-%m-%d')}_predicted_epoch_{epoch}",
             )
             wandb.log({"predicted": img})
 

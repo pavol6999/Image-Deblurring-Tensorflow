@@ -99,7 +99,7 @@ class DataGenerator:
     def add_noise(*imgs):
         blur, sharp = imgs
         """Add random noise to an image"""
-        sample = GaussianNoise(0.08)
+        sample = GaussianNoise(0.06)
         noisey = sample(blur, training=True)
         return noisey, sharp
 
