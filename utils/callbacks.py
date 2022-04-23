@@ -3,7 +3,7 @@ import os
 from matplotlib import pyplot as plt
 import tensorflow as tf
 from datetime import datetime
-
+from empatches import EMPatches
 import wandb
 
 
@@ -58,44 +58,47 @@ from tensorflow.keras.callbacks import Callback
 
 class PredictImageAfterEpoch(Callback):
     """
-    Callback which will be called after each epoch of training to predict a patch from test dataset generator.
-    At the start of training, the test dataset will yield one image pair patches. Then after each epoch, the blurred image patch will be predicted and saved.
+    Callback which will be called after each epoch of training to predict iamges from a directory (default `predict` dir).
     """
 
-    def __init__(self, image_pair, wandb_enabled):
+    def __init__(self, dir, wandb_enabled):
         super().__init__()
         self.wandb_enabled = wandb_enabled
-        self.blur, self.sharp = next(iter(image_pair))
-        tf.keras.utils.save_img(
-            os.getcwd() + f"/images/{datetime.now().strftime('%Y-%m-%d')}_blur_visualization.jpg",
-            self.blur[0],
-            scale=True,
-        )
+        self.dir = dir
+        self.predict_imgs = []
+        for file in PredictImageAfterEpoch._files(dir):
+            img = tf.keras.preprocessing.image.load_img(dir + "/" + file)
+            img = np.array(img) / 255.0
+            self.predict_imgs.append(img)
 
-        tf.keras.utils.save_img(
-            os.getcwd() + f"/images/{datetime.now().strftime('%Y-%m-%d')}_sharp_visualization.jpg",
-            self.sharp[0],
-            scale=True,
-        )
         if self.wandb_enabled:
-            image_blur = wandb.Image(self.blur[0])
-            image_sharp = wandb.Image(self.sharp[0])
-            wandb.log({"examples": [image_blur, image_sharp]})
 
-    def write_image(self, image, epoch):
-        image_to_write = np.copy(image)
-        tf.keras.utils.save_img(
-            os.getcwd() + f"/images/{datetime.now().strftime('%Y-%m-%d')}_predicted_{epoch}.jpg",
-            image_to_write[0],
-            scale=True,
-        )
+            wandb.log({"visualization": [wandb.Image(img) for img in self.predict_imgs]})
+        else:
+            if not os.path.exists(f"{dir}/predicted"):
+                os.makedirs(f"{dir}/predicted")
+
+    @staticmethod
+    def _files(path):
+        for file in os.listdir(path):
+            if os.path.isfile(os.path.join(path, file)):
+                yield file
+
+    def write_image(self, images, epoch):
+
         if self.wandb_enabled:
-            img = wandb.Image(
-                image_to_write[0],
-                caption="f{datetime.now().strftime('%Y-%m-%d')}_predicted_epoch_{epoch}",
-            )
-            wandb.log({"predicted": img})
+            wandb.log({"visualization": [wandb.Image(img) for img in images]})
+        else:
+            for i, img in enumerate(images):
+                plt.imsave(f"{self.dir}/predicted/epoch_{epoch}_{i}.png", img[0])
 
     def on_epoch_end(self, epoch, logs={}):
-        deblurred_image = self.model(self.blur, training=False)
-        self.write_image(deblurred_image, epoch)
+        # D:\FIIT\BP\training_set\train\blur\data
+        emp = EMPatches()
+        predicted_images = []
+        for img in self.predict_imgs:
+            predicted = np.expand_dims(img, 0)
+            predicted = self.model(predicted, training=False)
+            predicted = np.copy(predicted)
+            predicted_images.append(predicted)
+        self.write_image(predicted_images, epoch)

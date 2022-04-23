@@ -36,8 +36,8 @@ def ConvBlock(
             bias_initializer=bias_init,
             padding=padding,
         )(dropout)
-        bn2 = tf.keras.layers.BatchNormalization(axis=3)(conv2)
-        activation2 = tf.keras.layers.Activation(activation_func)(bn2)
+
+        activation2 = tf.keras.layers.Activation(activation_func)(conv2)
 
         # residual wizardry
         shortcut = tf.keras.layers.Conv2D(filters, kernel_size=(1, 1), padding=padding)(input_layer)
@@ -94,12 +94,11 @@ def ConvBlockTranspose(
             bias_initializer=bias_init,
             padding=padding,
         )(activation2)
-        bn3 = tf.keras.layers.BatchNormalization(axis=3)(conv2)
-        activation3 = tf.keras.layers.Activation(activation_func)(bn3)
+
+        activation3 = tf.keras.layers.Activation(activation_func)(conv2)
 
         shortcut = tf.keras.layers.Conv2D(filters, kernel_size=(1, 1), padding=padding)(concat)
         shortcut = tf.keras.layers.BatchNormalization(axis=3)(shortcut)
-        shortcut = tf.keras.layers.Activation(activation_func)(shortcut)
 
         out_layer = tf.keras.layers.add([shortcut, activation3])
 

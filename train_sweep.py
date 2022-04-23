@@ -1,11 +1,39 @@
 from argparse import ArgumentParser
+import os
 from types import SimpleNamespace
+import wandb
+import yaml
+
 from models.model import DeblurModel
 
-import os
+
+def sweep():
+    with wandb.init() as run:
+        config = wandb.config
+        data_path = os.getenv("DATA_FOLDER")
+        idk = SimpleNamespace(
+            epochs=50,
+            batch_size=4,
+            patience=None,
+            data=data_path,
+            model_path="model_path",
+            continue_training=False,
+            early_stopping=False,
+            checkpoints=False,
+            train=True,
+            test=False,
+            visualize=False,
+            save_after_train=True,
+            epoch_visualization=True,
+            tensorboard=False,
+            wandb=True,
+            wandb_api_key="026253717624f7e54ae9c7fdbf1c08b1267a9ec4",
+        )
+        model = DeblurModel(idk, config)
+        model.build(256).train()
+
 
 if __name__ == "__main__":
-
     parser = ArgumentParser(
         description="U-Net Neural Network for Dynamic Image Deblurring",
         epilog="Pavol Krajkovic, FIIT STU in Bratislava, Image Processing using Deep Learning Methods",
@@ -43,24 +71,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     os.environ["WANDB_API_KEY"] = args.wandb_api_key
-
-    args = SimpleNamespace(
-        epochs=50,
-        batch_size=4,
-        patience=None,
-        data=args.data,
-        model_path="model_path",
-        continue_training=False,
-        early_stopping=False,
-        checkpoints=False,
-        train=True,
-        test=False,
-        visualize=False,
-        save_after_train=True,
-        epoch_visualization=True,
-        tensorboard=False,
-        wandb=True,
-        wandb_api_key=args.wandb_api_key,
-    )
-    model = DeblurModel(args)
-    model.build(256).train()
+    os.environ["DATA_FOLDER"] = args.data
+    with open("sweep.yaml", "r") as stream:
+        try:
+            parsed_yaml = yaml.safe_load(stream)
+            print(parsed_yaml)
+            sweep_id = wandb.sweep(parsed_yaml, entity="xkrajkovic", project="bp_deblur")
+            count = 10  # number of runs to execute
+            wandb.agent(sweep_id, function=sweep, count=count)
+        except yaml.YAMLError as exc:
+            print(exc)

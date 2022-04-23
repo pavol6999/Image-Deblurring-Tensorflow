@@ -23,7 +23,18 @@ class DeblurModel:
     Base class for deblur model architecture based on the U-Net architecture.
     """
 
-    def __init__(self, args):
+    def __init__(self, args, config=None):
+
+        ############## Default config ################
+        self.learning_rate = 0.001
+        self.optimizer = "adam"
+        self.dropout_chance = 0.3
+        self.batch_size = 4
+        self.kernel_size = 3
+        self.loss_function = "SSIMLOSS"
+        self.filters = 64
+        ##############################################
+
         self.args = args or None
         self.epochs = args.epochs  # or 10
         self.batch_size = args.batch_size  # or 1
@@ -46,33 +57,37 @@ class DeblurModel:
         self.test_phase = args.test
         self.visualize_phase = args.visualize
         self.patience = args.patience
-        self.epochs = args.epochs
-        self.batch_size = args.batch_size
 
-        if self.wandb:
-            wandb.config = {
-                "learning_rate": 0.001,
-                "epochs": self.epochs,
-                "batch_size": self.batch_size,
-            }
-            os.environ["WANDB_API_KEY"] = args.wandb_api_key
+        ## Override default config with user config ##
+        if config is not None:
+            self.learning_rate = config["learning_rate"]  #
+            self.optimizer = config["optimizer"]  #
+            self.dropout_chance = config["dropout"]  #
+            self.batch_size = config["batch_size"]  #
+            self.kernel_size = config["kernel_size"]  #
+            self.loss_function = config["loss_function"]
+            self.filters = config["filters"]  #
+
+        ##############################################
+        if self.wandb and config is None:
             wandb.init(entity="xkrajkovic", project="bp_deblur", sync_tensorboard=False)
 
         if self.train_phase:
-            train_args = SimpleNamespace(
+
+            self.train_args = SimpleNamespace(
                 shuffle=True,
-                seed=69,
+                seed=1,
                 data_path=f"{self.data}/train",
                 channels=3,  # rgb
-                noise=True,
+                noise=False,
                 flip=True,
                 batch_size=self.batch_size,
                 mode="train",
-                repeat=1,
+                repeat=2,
             )
-            test_args = SimpleNamespace(
+            self.test_args = SimpleNamespace(
                 shuffle=True,
-                seed=69,
+                seed=1,
                 flip=False,
                 noise=False,
                 data_path=f"{self.data}/test",
@@ -81,9 +96,6 @@ class DeblurModel:
                 mode="test",
                 repeat=1,
             )
-
-            self.train_img_generator = DataGenerator(train_args)
-            self.test_img_generator = DataGenerator(test_args)
 
     def load_model(self, model_path):
         """
@@ -128,9 +140,9 @@ class DeblurModel:
         def wandb_callback():
             return WandbCallback(
                 log_weights=False,
-                generator=self.train_img_generator(),
-                validation_steps=10,
-                predictions=10,
+                generator=self.train_img_generator,
+                validation_steps=20,
+                predictions=20,
                 input_type="image",
                 output_type="image",
                 log_evaluation=True,
@@ -151,8 +163,8 @@ class DeblurModel:
             callbacks.append(SaveTrainedModel("deblurmodel", 1))
 
         if self.epoch_visualization:
-            image_pair = self.train_img_generator().take(1)
-            callbacks.append(PredictImageAfterEpoch(image_pair, self.wandb))
+
+            callbacks.append(PredictImageAfterEpoch("predict", self.wandb))
 
         if self.wandb:
             callbacks.append(wandb_callback())
@@ -161,64 +173,174 @@ class DeblurModel:
     def build(self, patch_size, num_layers=3):
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Building model...")
 
-        input = tf.keras.layers.Input((patch_size, patch_size, 3))
-        layer0 = ConvBlock(input, "relu", 32, block_name="Conv_Level_1", padding="same")
+        mirrored_strategy = tf.distribute.MirroredStrategy()
 
-        # downsample
-        layer1 = ConvBlock(layer0, "relu", 64, block_name="Conv_Level_1", padding="same")
-        maxpooling_1 = tf.keras.layers.MaxPooling2D(pool_size=(2, 2), strides=2, padding="same")(
-            layer1
-        )
+        with mirrored_strategy.scope():
 
-        layer2 = ConvBlock(maxpooling_1, "relu", 128, block_name="Conv_Level_2", padding="same")
-        maxpooling_2 = tf.keras.layers.MaxPooling2D(pool_size=(2, 2), strides=2, padding="same")(
-            layer2
-        )
+            if self.train_phase:
+                options = tf.data.Options()
+                options.experimental_distribute.auto_shard_policy = (
+                    tf.data.experimental.AutoShardPolicy.OFF
+                )
 
-        layer3 = ConvBlock(maxpooling_2, "relu", 256, block_name="Conv_Level_3", padding="same")
-        maxpooling_3 = tf.keras.layers.MaxPooling2D(pool_size=(2, 2), strides=2, padding="same")(
-            layer3
-        )
+                self.train_img_generator = DataGenerator(self.train_args)().with_options(options)
+                self.test_img_generator = DataGenerator(self.test_args)().with_options(options)
 
-        layer4 = ConvBlock(maxpooling_3, "relu", 512, block_name="Conv_Level_4", padding="same")
-        maxpooling_4 = tf.keras.layers.MaxPooling2D(pool_size=(2, 2), strides=2, padding="same")(
-            layer4
-        )
+            input = tf.keras.layers.Input((None, None, 3))
 
-        # hrdlo
+            # downsample
+            layer1 = ConvBlock(
+                input,
+                "relu",
+                self.filters,
+                block_name="Conv_Level_1",
+                dropout_chance=self.dropout_chance,
+                kernel_size=(self.kernel_size, self.kernel_size),
+                padding="same",
+            )
+            maxpooling_1 = tf.keras.layers.MaxPooling2D(
+                pool_size=(2, 2), strides=2, padding="same"
+            )(layer1)
 
-        # Block 5
-        conv_throttle = tf.keras.layers.Conv2D(1024, (3, 3), padding="same", name="throttle_conv1")(
-            maxpooling_4
-        )
-        drop_throttle = tf.keras.layers.Dropout(0.3)(conv_throttle)
-        conv_throttle2 = tf.keras.layers.Conv2D(
-            1024, (3, 3), padding="same", name="throttle_conv2"
-        )(drop_throttle)
-        conv_throttle3 = tf.keras.layers.Conv2D(
-            1024, (3, 3), padding="same", name="throttle_conv3"
-        )(conv_throttle2)
-        # upsample
+            layer2 = ConvBlock(
+                maxpooling_1,
+                "relu",
+                self.filters * 2,
+                block_name="Conv_Level_2",
+                dropout_chance=self.dropout_chance,
+                kernel_size=(self.kernel_size, self.kernel_size),
+                padding="same",
+            )
+            maxpooling_2 = tf.keras.layers.MaxPooling2D(
+                pool_size=(2, 2), strides=2, padding="same"
+            )(layer2)
 
-        layer_up = ConvBlockTranspose(
-            conv_throttle3, layer4, "relu", 512, padding="same", block_name="Conv_Up_Level_4"
-        )
+            layer3 = ConvBlock(
+                maxpooling_2,
+                "relu",
+                self.filters * 4,
+                block_name="Conv_Level_3",
+                dropout_chance=self.dropout_chance,
+                kernel_size=(self.kernel_size, self.kernel_size),
+                padding="same",
+            )
+            maxpooling_3 = tf.keras.layers.MaxPooling2D(
+                pool_size=(2, 2), strides=2, padding="same"
+            )(layer3)
 
-        layer_up1 = ConvBlockTranspose(
-            layer_up, layer3, "relu", 256, padding="same", block_name="Conv_Up_Level_3"
-        )
-        layer_up2 = ConvBlockTranspose(
-            layer_up1, layer2, "relu", 128, padding="same", block_name="Conv_Up_Level_2"
-        )
-        layer_up3 = ConvBlockTranspose(
-            layer_up2, layer1, "relu", 64, padding="same", block_name="Conv_Up_Level_1"
-        )
+            layer4 = ConvBlock(
+                maxpooling_3,
+                "relu",
+                self.filters * 8,
+                block_name="Conv_Level_4",
+                dropout_chance=self.dropout_chance,
+                kernel_size=(self.kernel_size, self.kernel_size),
+                padding="same",
+            )
+            maxpooling_4 = tf.keras.layers.MaxPooling2D(
+                pool_size=(2, 2), strides=2, padding="same"
+            )(layer4)
 
-        # output
-        output = tf.keras.layers.Conv2D(3, (1, 1), activation="sigmoid")(layer_up3)
+            # hrdlo
 
-        self.model = tf.keras.Model(input, output, name="Deblur")
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] Finished Building")
+            # Block 5
+            conv_throttle = tf.keras.layers.Conv2D(
+                self.filters * 16,
+                (self.kernel_size, self.kernel_size),
+                padding="same",
+                name="throttle_conv1",
+            )(maxpooling_4)
+            drop_throttle = tf.keras.layers.Dropout(self.dropout_chance)(conv_throttle)
+            conv_throttle2 = tf.keras.layers.Conv2D(
+                self.filters * 16,
+                (self.kernel_size, self.kernel_size),
+                padding="same",
+                name="throttle_conv2",
+            )(drop_throttle)
+            conv_throttle3 = tf.keras.layers.Conv2D(
+                self.filters * 16,
+                (self.kernel_size, self.kernel_size),
+                padding="same",
+                name="throttle_conv3",
+            )(conv_throttle2)
+            # upsample
+
+            layer_up = ConvBlockTranspose(
+                conv_throttle3,
+                layer4,
+                "relu",
+                self.filters * 8,
+                padding="same",
+                dropout_chance=self.dropout_chance,
+                kernel_size=(self.kernel_size, self.kernel_size),
+                block_name="Conv_Up_Level_4",
+            )
+
+            layer_up1 = ConvBlockTranspose(
+                layer_up,
+                layer3,
+                "relu",
+                self.filters * 4,
+                padding="same",
+                dropout_chance=self.dropout_chance,
+                kernel_size=(self.kernel_size, self.kernel_size),
+                block_name="Conv_Up_Level_3",
+            )
+            layer_up2 = ConvBlockTranspose(
+                layer_up1,
+                layer2,
+                "relu",
+                self.filters * 2,
+                padding="same",
+                dropout_chance=self.dropout_chance,
+                kernel_size=(self.kernel_size, self.kernel_size),
+                block_name="Conv_Up_Level_2",
+            )
+            layer_up3 = ConvBlockTranspose(
+                layer_up2,
+                layer1,
+                "relu",
+                self.filters,
+                padding="same",
+                dropout_chance=self.dropout_chance,
+                kernel_size=(self.kernel_size, self.kernel_size),
+                block_name="Conv_Up_Level_1",
+            )
+
+            # # output
+            output = tf.keras.layers.Conv2D(3, (1, 1), activation="sigmoid")(layer_up3)
+
+            self.model = tf.keras.Model(input, output, name="Deblur")
+
+            if self.optimizer == "adam":
+                optimizer = tf.keras.optimizers.Adam(
+                    learning_rate=self.learning_rate,
+                )
+            elif self.optimizer == "sgd":
+                optimizer = tf.keras.optimizers.SGD(
+                    learning_rate=self.learning_rate,
+                )
+            if self.loss_function == "SSIMLOSS":
+                self.model.compile(
+                    optimizer=optimizer,
+                    loss=SSIMLoss,
+                    metrics=["accuracy", PSNR, SSIM],
+                )
+
+            elif self.loss_function == "SobelLoss":
+                self.model.compile(
+                    optimizer=optimizer,
+                    loss=SobelLoss,
+                    metrics=["accuracy", PSNR, SSIM],
+                )
+            elif self.loss_function == "SSIM_L1_Loss":
+                self.model.compile(
+                    optimizer=optimizer,
+                    loss=SSIM_L1_Loss,
+                    metrics=["accuracy", PSNR, SSIM],
+                )
+
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] Finished Building")
 
         return self
 
@@ -230,14 +352,6 @@ class DeblurModel:
 
     def train(self):
 
-        model = self.model
-
-        model.compile(
-            optimizer="adam",
-            loss=SSIM_L1_Loss,
-            metrics=["accuracy", PSNR, SSIM],
-        )
-
         if self.use_best_weights:
             if not os.listdir(self.checkpoint_dir):
                 print("No checkpoint found. Please train the model first.")
@@ -246,9 +360,9 @@ class DeblurModel:
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] Best weights loaded.")
                 model.load_weights(os.path.join(os.getcwd(), self.checkpoint_dir))
 
-        model.fit(
-            self.train_img_generator(),
-            validation_data=self.test_img_generator(),
+        self.model.fit(
+            self.train_img_generator,
+            validation_data=self.test_img_generator,
             epochs=self.epochs,
             callbacks=self.callbacks_builder(),
             use_multiprocessing=True,
@@ -260,7 +374,7 @@ if __name__ == "__main__":
 
     args = dict(
         epochs=50,
-        batch_size=4,
+        batch_size=1,
         patience=5,
         data="training_set",
         model_path="model_path",
@@ -273,7 +387,7 @@ if __name__ == "__main__":
         save_after_train=True,
         epoch_visualization=True,
         tensorboard=False,
-        wandb=True,
+        wandb=False,
         wandb_api_key="026253717624f7e54ae9c7fdbf1c08b1267a9ec4",
     )
     args = SimpleNamespace(**args)
