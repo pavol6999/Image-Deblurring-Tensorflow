@@ -99,7 +99,7 @@ class DataGenerator:
     def add_noise(*imgs):
         blur, sharp = imgs
         """Add random noise to an image"""
-        sample = GaussianNoise(0.06)
+        sample = GaussianNoise(0.05)
         noisey = sample(blur, training=True)
         return noisey, sharp
 
@@ -116,7 +116,7 @@ class DataGenerator:
         )
 
     @staticmethod
-    def create_patches(sharp_img, blur_image, patch_size):
+    def create_patches(blur_image, sharp_image, patch_size):
         """_summary_
 
         Args:
@@ -127,9 +127,42 @@ class DataGenerator:
         Returns:
             Image pair of blur and sharp image patches
         """
-        stack = tf.stack([sharp_img, blur_image], axis=0)
-        patches = tf.image.random_crop(stack, size=[2, patch_size, patch_size, 3])
-        return patches[0], patches[1]
+        stack = tf.stack([blur_image, sharp_image], axis=0)
+
+        # create batch info
+        # blur_img = tf.expand_dims(blur_image, 0)
+        # sharp_img = tf.expand_dims(sharp_image, 0)
+        # blur_patches = tf.image.extract_patches(
+        #     blur_img,
+        #     sizes=[1, 256, 256, 1],
+        #     strides=[1, 256, 256, 1],
+        #     rates=[1, 1, 1, 1],
+        #     padding="VALID",
+        # )
+
+        # sharp_patches = tf.image.extract_patches(
+        #     sharp_img,
+        #     sizes=[1, 256, 256, 1],
+        #     strides=[1, 256, 256, 1],
+        #     rates=[1, 1, 1, 1],
+        #     padding="VALID",
+        # )
+        patches = tf.image.extract_patches(
+            stack,
+            sizes=[1, patch_size, patch_size, 1],
+            strides=[1, patch_size, patch_size, 1],
+            rates=[1, 1, 1, 1],
+            padding="VALID",
+        )
+        patches_shape = tf.shape(patches)
+        patches = tf.reshape(
+            patches, [2, patches_shape[1] * patches_shape[2], patch_size, patch_size, 3]
+        )
+        # patches = tf.image.random_crop(stack, size=[2, patch_size, patch_size, 3], seed=69)
+        # return patches[0], patches[1]
+        blur_patches = patches[0, :, :, :, :]
+        sharp_patches = patches[1, :, :, :, :]
+        return blur_patches, sharp_patches
 
     def load_dataset(
         self,
@@ -244,12 +277,14 @@ class DataGenerator:
             DataGenerator.dimension_modifier, num_parallel_calls=tf.data.experimental.AUTOTUNE
         )
 
+        # dataset = dataset.map(get_patches)
+
         dataset = dataset.map(
             lambda blur_image, sharp_image: DataGenerator.create_patches(
                 blur_image, sharp_image, 256
             )
         )
-
+        dataset = dataset.unbatch()
         if noise:
             dataset = dataset.map(
                 DataGenerator.add_noise,
@@ -298,15 +333,15 @@ class DataGenerator:
 
 if __name__ == "__main__":
     args = dict(
-        shuffle=True,
+        shuffle=False,
         seed=1,
         data_path="training_set/train",
-        batch_size=10,
+        batch_size=16,
         mode="train",
         noise=True,
         channels=3,
         flip=True,
-        repeat=2,
+        repeat=1,
     )
     args = SimpleNamespace(**args)
     data_generator = DataGenerator(args)

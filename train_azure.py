@@ -45,7 +45,7 @@ if __name__ == "__main__":
     os.environ["WANDB_API_KEY"] = args.wandb_api_key
 
     args = SimpleNamespace(
-        epochs=50,
+        epochs=100,
         batch_size=4,
         patience=None,
         data=args.data,

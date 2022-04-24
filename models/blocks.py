@@ -47,6 +47,23 @@ def ConvBlock(
     return out_layer
 
 
+def AttentionBlock(input_layer, gating, shape):
+    x_theta = tf.keras.layers.Conv2D(shape, (1, 1), padding="same")(input_layer)
+    g_phi = tf.keras.layers.Conv2D(shape, (1, 1), padding="same")(gating)
+
+    addition_xg = tf.keras.layers.add([g_phi, x_theta])
+
+    activation_xg = tf.keras.layers.Activation("relu")(addition_xg)
+
+    psi = tf.keras.layers.Conv2D(1, (1, 1), padding="same")(activation_xg)
+
+    sigmoid_psi = tf.keras.layers.Activation("sigmoid")(psi)
+
+    output = tf.keras.layers.multiply([input_layer, sigmoid_psi])
+
+    return output
+
+
 def ConvBlockTranspose(
     input_layer,
     concat_layer,
@@ -75,7 +92,13 @@ def ConvBlockTranspose(
 
         dropout = tf.keras.layers.Dropout(dropout_chance)(activation)
 
-        concat = tf.keras.layers.concatenate([dropout, concat_layer])
+        ### HERE LIES THE ATTENTION BLOCK ###
+        inter_shape = tf.keras.backend.int_shape(input_layer)[3]
+        att_block = AttentionBlock(concat_layer, dropout, shape=inter_shape // 4)
+
+        #####################################
+
+        concat = tf.keras.layers.concatenate([att_block, concat_layer])
 
         conv = tf.keras.layers.Conv2D(
             filters,

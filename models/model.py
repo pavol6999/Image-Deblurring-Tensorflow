@@ -29,9 +29,9 @@ class DeblurModel:
         self.learning_rate = 0.001
         self.optimizer = "adam"
         self.dropout_chance = 0.3
-        self.batch_size = 4
+        self.batch_size = 16
         self.kernel_size = 3
-        self.loss_function = "SSIMLOSS"
+        self.loss_function = "SSIM_L1_Loss"
         self.filters = 64
         ##############################################
 
@@ -79,7 +79,7 @@ class DeblurModel:
                 seed=1,
                 data_path=f"{self.data}/train",
                 channels=3,  # rgb
-                noise=False,
+                noise=True,
                 flip=True,
                 batch_size=self.batch_size,
                 mode="train",
@@ -141,8 +141,8 @@ class DeblurModel:
             return WandbCallback(
                 log_weights=False,
                 generator=self.train_img_generator,
-                validation_steps=20,
-                predictions=20,
+                validation_steps=30,
+                predictions=30,
                 input_type="image",
                 output_type="image",
                 log_evaluation=True,
@@ -257,16 +257,11 @@ class DeblurModel:
                 padding="same",
                 name="throttle_conv2",
             )(drop_throttle)
-            conv_throttle3 = tf.keras.layers.Conv2D(
-                self.filters * 16,
-                (self.kernel_size, self.kernel_size),
-                padding="same",
-                name="throttle_conv3",
-            )(conv_throttle2)
+
             # upsample
 
             layer_up = ConvBlockTranspose(
-                conv_throttle3,
+                conv_throttle2,
                 layer4,
                 "relu",
                 self.filters * 8,
@@ -374,10 +369,10 @@ if __name__ == "__main__":
 
     args = dict(
         epochs=50,
-        batch_size=1,
+        batch_size=16,
         patience=5,
         data="training_set",
-        model_path="model_path",
+        model_path="demo_set",
         continue_training=False,
         early_stopping=True,
         checkpoints=False,
