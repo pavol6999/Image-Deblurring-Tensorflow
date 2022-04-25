@@ -13,7 +13,7 @@ def sweep():
         data_path = os.getenv("DATA_FOLDER")
         idk = SimpleNamespace(
             epochs=50,
-            batch_size=4,
+            batch_size=16,
             patience=None,
             data=data_path,
             model_path="model_path",

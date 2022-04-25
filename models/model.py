@@ -26,10 +26,10 @@ class DeblurModel:
     def __init__(self, args, config=None):
 
         ############## Default config ################
-        self.learning_rate = 0.001
+        self.learning_rate = 0.003
         self.optimizer = "adam"
         self.dropout_chance = 0.3
-        self.batch_size = 16
+        self.batch_size = 4
         self.kernel_size = 3
         self.loss_function = "SSIM_L1_Loss"
         self.filters = 64
@@ -70,7 +70,15 @@ class DeblurModel:
 
         ##############################################
         if self.wandb and config is None:
+
             wandb.init(entity="xkrajkovic", project="bp_deblur", sync_tensorboard=False)
+            wandb.config.learning_rate = self.learning_rate
+            wandb.config.optimizer = self.optimizer
+            wandb.config.dropout_chance = self.dropout_chance
+            wandb.config.batch_size = self.batch_size
+            wandb.config.kernel_size = self.kernel_size
+            wandb.config.loss_function = self.loss_function
+            wandb.config.filters = self.filters
 
         if self.train_phase:
 
@@ -141,8 +149,8 @@ class DeblurModel:
             return WandbCallback(
                 log_weights=False,
                 generator=self.train_img_generator,
-                validation_steps=30,
-                predictions=30,
+                validation_steps=20,
+                predictions=20,
                 input_type="image",
                 output_type="image",
                 log_evaluation=True,
@@ -180,7 +188,7 @@ class DeblurModel:
             if self.train_phase:
                 options = tf.data.Options()
                 options.experimental_distribute.auto_shard_policy = (
-                    tf.data.experimental.AutoShardPolicy.OFF
+                    tf.data.experimental.AutoShardPolicy.DATA
                 )
 
                 self.train_img_generator = DataGenerator(self.train_args)().with_options(options)
@@ -328,6 +336,12 @@ class DeblurModel:
                     loss=SobelLoss,
                     metrics=["accuracy", PSNR, SSIM],
                 )
+            elif self.loss_function == "MeanGradientError":
+                self.model.compile(
+                    optimizer=optimizer,
+                    loss=MeanGradientError,
+                    metrics=["accuracy", PSNR, SSIM],
+                )
             elif self.loss_function == "SSIM_L1_Loss":
                 self.model.compile(
                     optimizer=optimizer,
@@ -371,7 +385,7 @@ if __name__ == "__main__":
         epochs=50,
         batch_size=16,
         patience=5,
-        data="training_set",
+        data="demo_set",
         model_path="demo_set",
         continue_training=False,
         early_stopping=True,

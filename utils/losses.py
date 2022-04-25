@@ -39,7 +39,7 @@ def SSIMLoss(y_true, y_pred):
 
 
 # taken from https://gist.github.com/quocdat32461997/cae85b748ce651ff6e3013880a5659af
-def MeanGradientError(outputs, targets, weight=1.0):
+def MeanGradientError(targets, outputs, weight=1.0):
     filter_x = tf.tile(
         tf.expand_dims(
             tf.constant([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=outputs.dtype), axis=-1
