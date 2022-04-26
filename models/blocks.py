@@ -6,7 +6,7 @@ def ConvBlock(
     activation_func,
     filters=32,
     kernel_size=(3, 3),
-    kernel_init="glorot_uniform",
+    kernel_init="he_normal",
     bias_init="zeros",
     padding="valid",
     dropout_chance=0.3,
@@ -26,7 +26,7 @@ def ConvBlock(
         activation = tf.keras.layers.Activation(activation_func)(bn)
 
         # dropout
-        dropout = tf.keras.layers.Dropout(dropout_chance)(activation)
+        # dropout = tf.keras.layers.Dropout(dropout_chance)(activation)
 
         # second small conv block
         conv2 = tf.keras.layers.Conv2D(
@@ -35,7 +35,7 @@ def ConvBlock(
             kernel_initializer=kernel_init,
             bias_initializer=bias_init,
             padding=padding,
-        )(dropout)
+        )(activation)
 
         activation2 = tf.keras.layers.Activation(activation_func)(conv2)
 
@@ -70,7 +70,7 @@ def ConvBlockTranspose(
     activation_func,
     filters=32,
     kernel_size=(3, 3),
-    kernel_init="glorot_uniform",
+    kernel_init="he_normal",
     bias_init="zeros",
     padding="valid",
     dropout_chance=0.3,
@@ -90,15 +90,15 @@ def ConvBlockTranspose(
         bn = tf.keras.layers.BatchNormalization(axis=3)(conv_transpose)
         activation = tf.keras.layers.Activation(activation_func)(bn)
 
-        dropout = tf.keras.layers.Dropout(dropout_chance)(activation)
+        # dropout = tf.keras.layers.Dropout(dropout_chance)(activation)
 
         ### HERE LIES THE ATTENTION BLOCK ###
         inter_shape = tf.keras.backend.int_shape(input_layer)[3]
-        att_block = AttentionBlock(concat_layer, dropout, shape=inter_shape // 4)
+        att_block = AttentionBlock(concat_layer, activation, shape=inter_shape // 4)
 
         #####################################
 
-        concat = tf.keras.layers.concatenate([att_block, concat_layer])
+        concat = tf.keras.layers.concatenate([att_block, concat_layer], axis=3)
 
         conv = tf.keras.layers.Conv2D(
             filters,

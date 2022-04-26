@@ -12,7 +12,7 @@ def sweep():
         config = wandb.config
         data_path = os.getenv("DATA_FOLDER")
         idk = SimpleNamespace(
-            epochs=50,
+            epochs=20,
             batch_size=16,
             patience=None,
             data=data_path,

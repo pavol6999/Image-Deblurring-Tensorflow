@@ -3,7 +3,6 @@ import os
 from matplotlib import pyplot as plt
 import tensorflow as tf
 from datetime import datetime
-from empatches import EMPatches
 import wandb
 
 
@@ -94,7 +93,7 @@ class PredictImageAfterEpoch(Callback):
 
     def on_epoch_end(self, epoch, logs={}):
         # D:\FIIT\BP\training_set\train\blur\data
-        emp = EMPatches()
+
         predicted_images = []
         for img in self.predict_imgs:
             predicted = np.expand_dims(img, 0)

@@ -6,7 +6,7 @@ import math
 import tensorflow as tf
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
 from types import SimpleNamespace
-import tensorflow_addons as tfa
+
 from tensorflow.keras.layers import GaussianNoise
 
 # training_set/GOPR0372_07_00
@@ -101,6 +101,7 @@ class DataGenerator:
         """Add random noise to an image"""
         sample = GaussianNoise(0.05)
         noisey = sample(blur, training=True)
+        noisey = tf.clip_by_value(noisey, 0, 1, name="clip_noise")
         return noisey, sharp
 
     @staticmethod
@@ -116,7 +117,7 @@ class DataGenerator:
         )
 
     @staticmethod
-    def create_patches(blur_image, sharp_img, patch_size):
+    def create_patches(blur_image, sharp_img, patch_size=256):
         """_summary_
         Args:
             sharp_img (Image `Tensor`): _description_
@@ -126,6 +127,7 @@ class DataGenerator:
             Image pair of blur and sharp image patches
         """
         stack = tf.stack([blur_image, sharp_img], axis=0)
+
         patches = tf.image.random_crop(stack, size=[2, patch_size, patch_size, 3])
         return patches[0], patches[1]
 
@@ -133,7 +135,7 @@ class DataGenerator:
         self,
         path: str,
         batch_size: int = 1,
-        shuffle: bool = False,
+        shuffle: bool = True,
         seed: int = 1,
         height: int = 720,
         width: int = 1280,
@@ -238,21 +240,18 @@ class DataGenerator:
         Returns:
             FlatMapDataset | DatasetV1Adapter: Tensorflow dataset of image pair patches
         """
-        dataset = data.map(
-            DataGenerator.dimension_modifier, num_parallel_calls=tf.data.experimental.AUTOTUNE
-        )
+        dataset = data.map(DataGenerator.dimension_modifier, num_parallel_calls=tf.data.AUTOTUNE)
 
         # dataset = dataset.map(get_patches)
         dataset = dataset.map(
-            lambda blur_image, sharp_image: DataGenerator.create_patches(
-                blur_image, sharp_image, 256
-            )
+            DataGenerator.create_patches,
+            num_parallel_calls=tf.data.AUTOTUNE,
         )
         # dataset = dataset.unbatch()
         if noise:
             dataset = dataset.map(
                 DataGenerator.add_noise,
-                num_parallel_calls=tf.data.experimental.AUTOTUNE,
+                num_parallel_calls=tf.data.AUTOTUNE,
             )
         # if rotate:
         #     choices = (True, False)
@@ -262,10 +261,10 @@ class DataGenerator:
         #             num_parallel_calls=tf.data.experimental.AUTOTUNE,
         #         )
         # if flip:
-        #     # dataset = dataset.map(
-        #     #     DataGenerator.horizontal_flip,
-        #     #     num_parallel_calls=tf.data.experimental.AUTOTUNE,
-        #     # )
+        #     dataset = dataset.map(
+        #         DataGenerator.horizontal_flip,
+        #         num_parallel_calls=tf.data.experimental.AUTOTUNE,
+        #     )
         #     dataset = dataset.map(
         #         DataGenerator.vertical_flip,
         #         num_parallel_calls=tf.data.experimental.AUTOTUNE,

@@ -1,6 +1,7 @@
 from datetime import datetime
 import math
 from types import SimpleNamespace
+from matplotlib import pyplot as plt
 import tensorflow as tf
 import sys
 import wandb
@@ -62,7 +63,7 @@ class DeblurModel:
         if config is not None:
             self.learning_rate = config["learning_rate"]  #
             self.optimizer = config["optimizer"]  #
-            self.dropout_chance = config["dropout"]  #
+
             self.batch_size = config["batch_size"]  #
             self.kernel_size = config["kernel_size"]  #
             self.loss_function = config["loss_function"]
@@ -149,12 +150,12 @@ class DeblurModel:
             return WandbCallback(
                 log_weights=False,
                 generator=self.train_img_generator,
-                validation_steps=20,
-                predictions=20,
-                input_type="image",
-                output_type="image",
+                validation_steps=10,
+                predictions=10,
+                input_type="images",
+                output_type="images",
                 log_evaluation=True,
-                log_evaluation_frequency=1,
+                log_evaluation_frequency=2,
             )
 
         callbacks = []
@@ -258,18 +259,24 @@ class DeblurModel:
                 padding="same",
                 name="throttle_conv1",
             )(maxpooling_4)
-            drop_throttle = tf.keras.layers.Dropout(self.dropout_chance)(conv_throttle)
+            # drop_throttle = tf.keras.layers.Dropout(self.dropout_chance)(conv_throttle)
             conv_throttle2 = tf.keras.layers.Conv2D(
                 self.filters * 16,
                 (self.kernel_size, self.kernel_size),
                 padding="same",
                 name="throttle_conv2",
-            )(drop_throttle)
+            )(conv_throttle)
+            conv_throttle3 = tf.keras.layers.Conv2D(
+                self.filters * 16,
+                (self.kernel_size, self.kernel_size),
+                padding="same",
+                name="throttle_conv3",
+            )(conv_throttle2)
 
             # upsample
 
             layer_up = ConvBlockTranspose(
-                conv_throttle2,
+                conv_throttle3,
                 layer4,
                 "relu",
                 self.filters * 8,
@@ -336,6 +343,12 @@ class DeblurModel:
                     loss=SobelLoss,
                     metrics=["accuracy", PSNR, SSIM],
                 )
+            elif self.loss_function == "mse":
+                self.model.compile(
+                    optimizer=optimizer,
+                    loss="mse",
+                    metrics=["accuracy", PSNR, SSIM],
+                )
             elif self.loss_function == "MeanGradientError":
                 self.model.compile(
                     optimizer=optimizer,
@@ -383,7 +396,7 @@ if __name__ == "__main__":
 
     args = dict(
         epochs=50,
-        batch_size=16,
+        batch_size=2,
         patience=5,
         data="demo_set",
         model_path="demo_set",
@@ -395,7 +408,7 @@ if __name__ == "__main__":
         visualize=False,
         save_after_train=True,
         epoch_visualization=True,
-        tensorboard=False,
+        tensorboard=True,
         wandb=False,
         wandb_api_key="026253717624f7e54ae9c7fdbf1c08b1267a9ec4",
     )

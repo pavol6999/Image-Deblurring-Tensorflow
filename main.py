@@ -4,7 +4,7 @@ import sys
 
 
 ROOT_DIR = os.getcwd()
-from models.model import DeblurModel
+
 from trainer import Trainer
 
 

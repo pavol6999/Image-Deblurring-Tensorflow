@@ -56,7 +56,7 @@ if __name__ == "__main__":
         train=True,
         test=False,
         visualize=False,
-        save_after_train=True,
+        save_after_train=False,
         epoch_visualization=True,
         tensorboard=False,
         wandb=True,
