@@ -35,7 +35,7 @@ class Trainer:
                     "--data",
                     dataset.as_named_input("GoPro_v2").as_mount("/tmp/GoPro_v2"),
                 ],  # This is important how to mount dataset from DataStore
-                compute_target="K80x4-Krajkovic",
+                compute_target="P40x2-krajkovic",
             )  # Compute target is your created compute cluster
             experiment = Experiment(workspace=ws, name="Deblur_v2")
             env = Environment.get(workspace=ws, name="krajkovic-env")
