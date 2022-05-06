@@ -155,7 +155,7 @@ class DeblurModel:
                 input_type="images",
                 output_type="images",
                 log_evaluation=True,
-                log_evaluation_frequency=2,
+                log_evaluation_frequency=5,
             )
 
         callbacks = []

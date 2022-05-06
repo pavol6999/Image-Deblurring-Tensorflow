@@ -93,11 +93,11 @@ class PredictImageAfterEpoch(Callback):
 
     def on_epoch_end(self, epoch, logs={}):
         # D:\FIIT\BP\training_set\train\blur\data
-
-        predicted_images = []
-        for img in self.predict_imgs:
-            predicted = np.expand_dims(img, 0)
-            predicted = self.model(predicted, training=False)
-            predicted = np.copy(predicted)
-            predicted_images.append(predicted)
-        self.write_image(predicted_images, epoch)
+        if epoch % 5 == 0:
+            predicted_images = []
+            for img in self.predict_imgs:
+                predicted = np.expand_dims(img, 0)
+                predicted = self.model(predicted, training=False)
+                predicted = np.copy(predicted)
+                predicted_images.append(predicted)
+            self.write_image(predicted_images, epoch)
