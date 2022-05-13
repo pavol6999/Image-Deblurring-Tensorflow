@@ -1,6 +1,6 @@
 from argparse import ArgumentParser
 from types import SimpleNamespace
-from models.model import DeblurModel
+from model.model import DeblurModel
 
 import os
 
@@ -45,7 +45,7 @@ if __name__ == "__main__":
     os.environ["WANDB_API_KEY"] = args.wandb_api_key
 
     args = SimpleNamespace(
-        epochs=100,
+        epochs=200,
         batch_size=4,
         patience=None,
         data=args.data,
@@ -55,7 +55,6 @@ if __name__ == "__main__":
         checkpoints=False,
         train=True,
         test=False,
-        visualize=False,
         save_after_train=False,
         epoch_visualization=True,
         tensorboard=False,

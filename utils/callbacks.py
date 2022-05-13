@@ -25,10 +25,6 @@ class SaveTrainedModel(tf.keras.callbacks.Callback):
         self.filename = filename
         self.date = date
 
-        # if not os.path.exists(self.filename):
-        #     self.model.stop_training = True
-        #     raise (ValueError("The filename {} does not exist".format(self.filename)))
-
         if date > 0:
             self.fullname = (
                 str(datetime.now().strftime("%Y-%m-%d-%H%M")) + "_" + self.filename + ".h5"
@@ -57,7 +53,7 @@ from tensorflow.keras.callbacks import Callback
 
 class PredictImageAfterEpoch(Callback):
     """
-    Callback which will be called after each epoch of training to predict iamges from a directory (default `predict` dir).
+    Callback object which will be called after each epoch in training phase to predict images from a directory (default `predict` dir).
     """
 
     def __init__(self, dir, wandb_enabled):
@@ -65,14 +61,19 @@ class PredictImageAfterEpoch(Callback):
         self.wandb_enabled = wandb_enabled
         self.dir = dir
         self.predict_imgs = []
+
+        # load the images, that we want to predict after each epoch
         for file in PredictImageAfterEpoch._files(dir):
             img = tf.keras.preprocessing.image.load_img(dir + "/" + file)
-            img = np.array(img) / 255.0
+            img = np.array(img) / 255.0  # convert to numpy array and normalize
             self.predict_imgs.append(img)
 
+        # if we log our data to WandB, then dont save the image but upload it to the WandB project
         if self.wandb_enabled:
 
             wandb.log({"visualization": [wandb.Image(img) for img in self.predict_imgs]})
+
+        # else prepare a directory, where the ouputted predicted images will be saved
         else:
             if not os.path.exists(f"{dir}/predicted"):
                 os.makedirs(f"{dir}/predicted")
@@ -84,20 +85,30 @@ class PredictImageAfterEpoch(Callback):
                 yield file
 
     def write_image(self, images, epoch):
+        """Writes the image data to the specified directory, with name as `epoch_(epoch_number)_(i).png`.
+        Args:
+            images: array of images to write
+            epoch: current epoch
+        """
 
+        # if we log our data to WandB, then dont save the image but upload it to the WandB project
         if self.wandb_enabled:
             wandb.log({"visualization": [wandb.Image(img) for img in images]})
+
+        # else write image data
         else:
             for i, img in enumerate(images):
                 plt.imsave(f"{self.dir}/predicted/epoch_{epoch}_{i}.png", img[0])
 
     def on_epoch_end(self, epoch, logs={}):
-        # D:\FIIT\BP\training_set\train\blur\data
+
         if epoch % 5 == 0:
             predicted_images = []
             for img in self.predict_imgs:
-                predicted = np.expand_dims(img, 0)
-                predicted = self.model(predicted, training=False)
-                predicted = np.copy(predicted)
-                predicted_images.append(predicted)
+                predicted = np.expand_dims(img, 0)  # add batch information
+                predicted = self.model(predicted, training=False)  # predict the image
+                predicted = np.copy(predicted)  # transform it to a numpy array
+                predicted_images.append(
+                    predicted
+                )  # append it to an array with predicted image data
             self.write_image(predicted_images, epoch)

@@ -8,13 +8,17 @@ ROOT_DIR = os.getcwd()
 from trainer import Trainer
 
 
+# from predictor import Predictor
+
+
 def validate_args(parser):
     args = parser.parse_args()
     args.wandb = False
-    print(args)
-    if (args.train or args.test) and not args.data:
+    if args.test and not args.model_path:
+        parser.error("You need to specify the model location in order to run the test")
+    if (args.train) and not args.data:
         parser.error("You must specify folder containing train or test data")
-    if (args.test or args.visualize) and (
+    if (args.test) and (
         args.save_after_train
         or args.checkpoints
         or args.early_stopping
@@ -22,13 +26,13 @@ def validate_args(parser):
         or args.tensorboard
         or args.checkpoint_dir
     ):
-        parser.error("You can't use checkpoint callback in test or visualize mode")
-    if (args.test or args.visualize) and (args.batch_size or args.epochs):
-        parser.error("You can't use batch or epochs in test or visualize mode")
+        parser.error("You can't use checkpoint callback in testmode")
+    if (args.test) and (args.batch_size != 4 or args.epochs != 100):  # not default values
+        parser.error("You can't use batch or epochs in test  mode")
 
-    if (args.wandb_project or args.wandb_entity) and not args.wandb_api_key:
+    if (args.wandb_project or args.wandb_entity) and not args.wandb_api_key and args.train:
         parser.error("You must specify wandb api key if you want to use wandb")
-    elif args.wandb_api_key:
+    elif args.wandb_api_key and args.train:
         os.environ["WANDB_API_KEY"] = args.wandb_api_key
         args.wandb = True
     return args
@@ -79,11 +83,8 @@ def parse_arguments(args):
     core_group = parser.add_argument_group("CORE", "Arguments for running the neural network")
 
     phase = core_group.add_mutually_exclusive_group(required=False)
-    phase.add_argument(
-        "--train", action="store_true", default=True, help="Train the neural network"
-    )
+    phase.add_argument("--train", action="store_true", help="Train the neural network")
     phase.add_argument("--test", action="store_true", help="Test the neural network")
-    phase.add_argument("--visualize", action="store_true", help="Visualize the neural network")
 
     core_group.add_argument(
         "-e",
@@ -162,10 +163,12 @@ def parse_arguments(args):
 
 if __name__ == "__main__":
     args = parse_arguments(os.sys.argv[1:])
-
+    trainer = Trainer(args)
     if args.train:
-        trainer = Trainer(args)
         if not args.sweep:
             trainer.train()
         else:
             trainer.train_sweep()
+
+    if args.test:
+        trainer.predict()

@@ -2,6 +2,7 @@ from datetime import datetime
 import math
 from types import SimpleNamespace
 from matplotlib import pyplot as plt
+import numpy as np
 import tensorflow as tf
 import sys
 import wandb
@@ -12,11 +13,11 @@ import os
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"
 
 sys.path.append("./")
-from models.blocks import ConvBlock, ConvBlockTranspose
+from model.blocks import ConvBlock, ConvBlockTranspose
 from data.DataGenerator import DataGenerator
 from utils.callbacks import PredictImageAfterEpoch, SaveTrainedModel
 from utils.metrics import PSNR, SSIM
-from utils.losses import MeanGradientError, SSIM_L1_Loss, SSIMLoss, SobelLoss
+from utils.losses import SSIM_L1_Loss, SSIMLoss
 
 
 class DeblurModel:
@@ -25,23 +26,21 @@ class DeblurModel:
     """
 
     def __init__(self, args, config=None):
+        self.train_phase = args.train
 
         ############## Default config ################
         self.learning_rate = 0.003
         self.optimizer = "adam"
-        self.dropout_chance = 0.3
         self.batch_size = 4
         self.kernel_size = 3
-        self.loss_function = "SSIM_L1_Loss"
-        self.filters = 64
+        self.loss_function = "mse"
+        self.filters = 32
         ##############################################
 
         self.args = args or None
         self.epochs = args.epochs  # or 10
         self.batch_size = args.batch_size  # or 1
-        self.model = (
-            args.model_path
-        )  # TODO make model loading process `load_model(model_path) or build_model()`
+
         self.data = args.data
 
         self.use_best_weights = args.continue_training
@@ -53,11 +52,12 @@ class DeblurModel:
         self.epoch_visualization = args.epoch_visualization
         self.tensorboard = args.tensorboard
         self.wandb = args.wandb
-
-        self.train_phase = args.train
-        self.test_phase = args.test
-        self.visualize_phase = args.visualize
         self.patience = args.patience
+
+        self.test_phase = args.test
+
+        if self.test_phase:
+            self.load_model(args.model_path)
 
         ## Override default config with user config ##
         if config is not None:
@@ -72,15 +72,18 @@ class DeblurModel:
         ##############################################
         if self.wandb and config is None:
 
-            wandb.init(entity="xkrajkovic", project="bp_deblur", sync_tensorboard=False)
+            wandb.init(
+                entity="xkrajkovic", project="bp_deblur", sync_tensorboard=False
+            )  # this intialization must be rewrittten if you wish to use your own wandb project and entity
             wandb.config.learning_rate = self.learning_rate
             wandb.config.optimizer = self.optimizer
-            wandb.config.dropout_chance = self.dropout_chance
             wandb.config.batch_size = self.batch_size
             wandb.config.kernel_size = self.kernel_size
             wandb.config.loss_function = self.loss_function
             wandb.config.filters = self.filters
 
+        # if we are in training phase of the model, we need to create the dataset image generators of blur and sharp images
+        # these are the arguments passed down to the Datagenerator class
         if self.train_phase:
 
             self.train_args = SimpleNamespace(
@@ -92,7 +95,7 @@ class DeblurModel:
                 flip=True,
                 batch_size=self.batch_size,
                 mode="train",
-                repeat=2,
+                repeat=1,
             )
             self.test_args = SimpleNamespace(
                 shuffle=True,
@@ -106,11 +109,26 @@ class DeblurModel:
                 repeat=1,
             )
 
+    @staticmethod
+    def _files(path):
+        for file in os.listdir(path):
+            if os.path.isfile(os.path.join(path, file)):
+                yield file
+
     def load_model(self, model_path):
         """
-        Loads the model from the specified path.
+        Loads the model from the specified path. Needs to include the model name as well.
+        So if for example our trained model is in `trained` directory, we need to specify the path as `trained/model_name.h5`.
         """
-        self.model = tf.keras.models.load_model(model_path)
+        # create a dictionary containing the custom objects in our model as these are not saved in the training phase. In our case
+        # the custom objects are the loss functions and the metrics
+        custom_objects = {
+            "SSIMLoss": SSIMLoss,
+            "SSIM_L1_Loss": SSIM_L1_Loss,
+            "PSNR": PSNR,
+            "SSIM": SSIM,
+        }
+        self.model = tf.keras.models.load_model(model_path, custom_objects=custom_objects)
 
     def save_model(self, out_path, model_name):
         """
@@ -119,8 +137,18 @@ class DeblurModel:
         self.model.save(out_path + model_name)
 
     def callbacks_builder(self):
-        def model_checkpoint(path):
+        """Method that builds the callbacks for the model."""
 
+        def model_checkpoint(path):
+            """
+            We use the `save_best_only` with the reference metric being
+                the `val_ssim` metric. After each epoch, if the `val_ssim` metric is better than the previous one, the model weights are saved.
+            Args:
+                path (str): path where during the training, the model weights will be saved.
+
+            Returns:
+                `tf.keras.callbacks.ModelCheckpoint`: callback that saves the model weights after each epoch.
+            """
             model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
                 filepath=os.path.join(os.getcwd(), path),
                 save_weights_only=True,
@@ -132,6 +160,11 @@ class DeblurModel:
             return model_checkpoint_callback
 
         def early_stopping():
+            """Callback maker to run early stopping.
+                Default patience is 5.
+            Returns:
+                tf.keras.callbacks.EarlyStopping: callback that stops the training if the validation loss does not improve after a certain number of epochs.
+            """
             return tf.keras.callbacks.EarlyStopping(
                 monitor="val_loss",
                 min_delta=0,
@@ -142,14 +175,16 @@ class DeblurModel:
                 restore_best_weights=False,
             )
 
-        def tensorboard_checkpoint_callback():
-            log_dir = "logs/fit/" + datetime.now().strftime("%Y%m%d-%H%M%S")
-            return tf.keras.callbacks.TensorBoard(log_dir=log_dir, histogram_freq=1)
-
         def wandb_callback():
+            """
+            WandB callback. This callback is used to log the training metrics to wandb. After each 5 epochs, predictions are made on the test set and logged to wandb. Model with the best "val_loss" metric is saved.
+
+            Returns:
+                 WandbCallback
+            """
             return WandbCallback(
                 log_weights=False,
-                generator=self.train_img_generator,
+                generator=self.test_img_generator,
                 validation_steps=10,
                 predictions=10,
                 input_type="images",
@@ -160,10 +195,9 @@ class DeblurModel:
 
         callbacks = []
 
+        # append our callback array and return it
         if self.early_stopping:
             callbacks.append(early_stopping())
-        if self.tensorboard:
-            callbacks.append(tensorboard_checkpoint_callback())
 
         if self.checkpoint:
             callbacks.append(model_checkpoint(self.checkpoint_dir))
@@ -180,12 +214,15 @@ class DeblurModel:
         return callbacks
 
     def build(self, patch_size, num_layers=3):
+        """Build the model architecture and compile it."""
         print(f"[{datetime.now().strftime('%H:%M:%S')}] Building model...")
 
+        # use of mirrored_strategy as the model was trained on a computer with multiple GPU. by doing this we can utilize more than one GPU
         mirrored_strategy = tf.distribute.MirroredStrategy()
 
         with mirrored_strategy.scope():
 
+            # enable the autoshard policy which shards the dataset
             if self.train_phase:
                 options = tf.data.Options()
                 options.experimental_distribute.auto_shard_policy = (
@@ -195,6 +232,7 @@ class DeblurModel:
                 self.train_img_generator = DataGenerator(self.train_args)().with_options(options)
                 self.test_img_generator = DataGenerator(self.test_args)().with_options(options)
 
+            ### ARCHITECTURE OF THE RESIDUAL ATTENTION U-NET ###
             input = tf.keras.layers.Input((None, None, 3))
 
             # downsample
@@ -203,7 +241,6 @@ class DeblurModel:
                 "relu",
                 self.filters,
                 block_name="Conv_Level_1",
-                dropout_chance=self.dropout_chance,
                 kernel_size=(self.kernel_size, self.kernel_size),
                 padding="same",
             )
@@ -216,7 +253,6 @@ class DeblurModel:
                 "relu",
                 self.filters * 2,
                 block_name="Conv_Level_2",
-                dropout_chance=self.dropout_chance,
                 kernel_size=(self.kernel_size, self.kernel_size),
                 padding="same",
             )
@@ -229,7 +265,6 @@ class DeblurModel:
                 "relu",
                 self.filters * 4,
                 block_name="Conv_Level_3",
-                dropout_chance=self.dropout_chance,
                 kernel_size=(self.kernel_size, self.kernel_size),
                 padding="same",
             )
@@ -242,7 +277,6 @@ class DeblurModel:
                 "relu",
                 self.filters * 8,
                 block_name="Conv_Level_4",
-                dropout_chance=self.dropout_chance,
                 kernel_size=(self.kernel_size, self.kernel_size),
                 padding="same",
             )
@@ -259,7 +293,6 @@ class DeblurModel:
                 padding="same",
                 name="throttle_conv1",
             )(maxpooling_4)
-            # drop_throttle = tf.keras.layers.Dropout(self.dropout_chance)(conv_throttle)
             conv_throttle2 = tf.keras.layers.Conv2D(
                 self.filters * 16,
                 (self.kernel_size, self.kernel_size),
@@ -281,7 +314,6 @@ class DeblurModel:
                 "relu",
                 self.filters * 8,
                 padding="same",
-                dropout_chance=self.dropout_chance,
                 kernel_size=(self.kernel_size, self.kernel_size),
                 block_name="Conv_Up_Level_4",
             )
@@ -292,7 +324,6 @@ class DeblurModel:
                 "relu",
                 self.filters * 4,
                 padding="same",
-                dropout_chance=self.dropout_chance,
                 kernel_size=(self.kernel_size, self.kernel_size),
                 block_name="Conv_Up_Level_3",
             )
@@ -302,7 +333,6 @@ class DeblurModel:
                 "relu",
                 self.filters * 2,
                 padding="same",
-                dropout_chance=self.dropout_chance,
                 kernel_size=(self.kernel_size, self.kernel_size),
                 block_name="Conv_Up_Level_2",
             )
@@ -312,7 +342,6 @@ class DeblurModel:
                 "relu",
                 self.filters,
                 padding="same",
-                dropout_chance=self.dropout_chance,
                 kernel_size=(self.kernel_size, self.kernel_size),
                 block_name="Conv_Up_Level_1",
             )
@@ -320,8 +349,10 @@ class DeblurModel:
             # # output
             output = tf.keras.layers.Conv2D(3, (1, 1), activation="sigmoid")(layer_up3)
 
+            # create our model and assign it to the `self.model` attribute
             self.model = tf.keras.Model(input, output, name="Deblur")
 
+            # choose the optimizer and loss function to be used, then compile the model
             if self.optimizer == "adam":
                 optimizer = tf.keras.optimizers.Adam(
                     learning_rate=self.learning_rate,
@@ -337,24 +368,13 @@ class DeblurModel:
                     metrics=["accuracy", PSNR, SSIM],
                 )
 
-            elif self.loss_function == "SobelLoss":
-                self.model.compile(
-                    optimizer=optimizer,
-                    loss=SobelLoss,
-                    metrics=["accuracy", PSNR, SSIM],
-                )
             elif self.loss_function == "mse":
                 self.model.compile(
                     optimizer=optimizer,
                     loss="mse",
                     metrics=["accuracy", PSNR, SSIM],
                 )
-            elif self.loss_function == "MeanGradientError":
-                self.model.compile(
-                    optimizer=optimizer,
-                    loss=MeanGradientError,
-                    metrics=["accuracy", PSNR, SSIM],
-                )
+
             elif self.loss_function == "SSIM_L1_Loss":
                 self.model.compile(
                     optimizer=optimizer,
@@ -366,21 +386,47 @@ class DeblurModel:
 
         return self
 
-    def visualize(self, out_path):
-        if not (out_path.endswith(".png") or out_path.endswith(".jpg")):
-            out_path += ".png"
-        tf.keras.utils.plot_model(self.model, to_file=out_path, show_shapes=True)
-        print("Model visualization complete. Output path: " + out_path)
+    """
+     Predicts the images in the directory 'predict' and saves the results in the directory 'predict/predicted'
+    """
+
+    def predict(self):
+        predict_imgs = []  # images to be predicted
+        predicted_images = []  # images predicted
+        dir = "predict"
+
+        # load the images inside the directory
+        for file in DeblurModel._files(dir):
+            img = tf.keras.preprocessing.image.load_img(dir + "/" + file)
+            img = np.array(img) / 255.0  # max value of the color channel
+            predict_imgs.append(img)
+
+        # create the output directory if not present already
+        if not os.path.exists(f"{dir}/predicted"):
+            os.makedirs(f"{dir}/predicted")
+
+        # predict the images
+        for img in predict_imgs:
+            predicted = np.expand_dims(img, 0)  # add the batch dimension to the image
+            predicted = self.model(predicted, training=False)  # predict the image
+            predicted = np.copy(predicted)
+            predicted_images.append(predicted)
+
+        # write the images to files
+        for i, img in enumerate(predicted_images):
+            plt.imsave(f"{dir}/predicted/{i}.png", img[0])
+        print(f"Predicted images in the directory '{dir}/predicted'")
 
     def train(self):
 
+        # if we want to continue training, we load the previously trained model.
         if self.use_best_weights:
             if not os.listdir(self.checkpoint_dir):
                 print("No checkpoint found. Please train the model first.")
             else:
 
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] Best weights loaded.")
-                model.load_weights(os.path.join(os.getcwd(), self.checkpoint_dir))
+                self.model.load_weights(os.path.join(os.getcwd(), self.checkpoint_dir))
 
         self.model.fit(
             self.train_img_generator,
@@ -403,14 +449,12 @@ if __name__ == "__main__":
         continue_training=False,
         early_stopping=True,
         checkpoints=False,
-        train=True,
+        train=False,
         test=False,
-        visualize=False,
         save_after_train=True,
         epoch_visualization=True,
         tensorboard=True,
         wandb=False,
-        wandb_api_key="026253717624f7e54ae9c7fdbf1c08b1267a9ec4",
     )
     args = SimpleNamespace(**args)
 

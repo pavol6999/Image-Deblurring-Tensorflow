@@ -40,6 +40,7 @@ class DataGenerator:
         self.data_path = args.data_path
         assert os.path.isdir(self.data_path), "The data path is not a valid directory"
 
+        # this is the main attribute of the DataGenerator class, it holds the load images
         self.dataset = self.load_dataset(
             self.data_path,
             self.batch_size,
@@ -50,10 +51,14 @@ class DataGenerator:
             self.mode,
             self.channels,
         )
+
+        # as this dataset is to this point infinite, we need to set a cardinality to this dataset, so it does not loop forever.
+        # another way to prevent this infinite looping is by setting training_steps in the model.fit() method.
         self.dataset = self.dataset.apply(
             tf.data.experimental.assert_cardinality(self.dataset_size * self.repeat)
         )
 
+    # on calling DataGenerator() object, return our dataset
     def __call__(self, *args, **kwds):
         """
 
@@ -66,27 +71,9 @@ class DataGenerator:
 
         return self.dataset_size * self.repeat
 
-    def vertical_flip(*imgs):
-
-        blur, sharp = imgs
-        choices = (True, False)
-        if random.choice(choices) and random.choice(choices):
-            return tf.image.flip_up_down(image=blur), tf.image.flip_up_down(image=sharp)
-        else:
-            return blur, sharp
-
-    def horizontal_flip(*imgs):
-
-        blur, sharp = imgs
-        choices = (True, False)
-        if random.choice(choices) and random.choice(choices):
-            return tf.image.flip_left_right(image=blur), tf.image.flip_left_right(image=sharp)
-        else:
-            return blur, sharp
-
     @staticmethod
     def dimension_modifier(*imgs):
-        """Modifier method modifies the dimension of the input images to match the model input shape.
+        """Modifier method, that modifies the dimension of the input images to match the model input shape.
 
         Returns:
             `tuple`: image pair of blur and sharp image
@@ -97,24 +84,18 @@ class DataGenerator:
     # https://stackoverflow.com/questions/43382045/keras-realtime-augmentation-adding-noise-and-contrast
     @staticmethod
     def add_noise(*imgs):
+        """Add random gaussian noise to an image
+
+        Returns:
+            `tuple`: image pair of blur and sharp image
+
+        """
+
         blur, sharp = imgs
-        """Add random noise to an image"""
         sample = GaussianNoise(0.05)
         noisey = sample(blur, training=True)
         noisey = tf.clip_by_value(noisey, 0, 1, name="clip_noise")
         return noisey, sharp
-
-    @staticmethod
-    def rotate(*imgs):
-        blur, sharp = imgs
-        choices = (90, 180)
-        angle = random.choices(choices)
-        angle = angle[0] * math.pi / 180
-        print(angle)
-        print(angle)
-        return tfa.image.rotate(blur, tf.constant(angle)), tfa.image.rotate(
-            sharp, tf.constant(angle)
-        )
 
     @staticmethod
     def create_patches(blur_image, sharp_img, patch_size=256):
@@ -190,6 +171,7 @@ class DataGenerator:
         """
         if mode == "train":
 
+            # initialize our image generators for blur and sharp images. This is the train
             BlurredDataGenerator = ImageDataGenerator(
                 rescale=1.0 / 255.0, horizontal_flip=flip, vertical_flip=flip
             )
@@ -232,7 +214,9 @@ class DataGenerator:
 
     @staticmethod
     def preprocess_dataset(data, noise):
-        """_summary_
+        """Preprocessing function, that first pops out the batch dimension,
+        then creates uniform patches at the same location of the image pairs
+        and if `noise` is True, then adds a Gaussian Noise to the blurred crop of the image pair
 
         Args:
             data (`FlatMapDataset | DatasetV1Adapter`): Tensorflow dataset of image pairs
@@ -253,22 +237,7 @@ class DataGenerator:
                 DataGenerator.add_noise,
                 num_parallel_calls=tf.data.AUTOTUNE,
             )
-        # if rotate:
-        #     choices = (True, False)
-        #     if  rotate and random.choice(choices):
-        #         dataset = dataset.map(
-        #             DataGenerator.rotate,
-        #             num_parallel_calls=tf.data.experimental.AUTOTUNE,
-        #         )
-        # if flip:
-        #     dataset = dataset.map(
-        #         DataGenerator.horizontal_flip,
-        #         num_parallel_calls=tf.data.experimental.AUTOTUNE,
-        #     )
-        #     dataset = dataset.map(
-        #         DataGenerator.vertical_flip,
-        #         num_parallel_calls=tf.data.experimental.AUTOTUNE,
-        #     )
+
         return dataset
 
     def combine_generators_into_dataset(self, gen1, gen2):
@@ -323,7 +292,3 @@ if __name__ == "__main__":
         plt.show()
 
         input()
-    #   for i in range(9):
-    #     ax = plt.subplot(3, 3, i + 1)
-    #     plt.imshow(images[i].numpy().astype("uint8"))
-    #     plt.axis("off")

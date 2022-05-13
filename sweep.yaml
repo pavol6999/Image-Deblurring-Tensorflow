@@ -1,5 +1,5 @@
 program: train.py
-method: grid
+method: bayes
 early_terminate:
   type: hyperband
   min_iter: 5
@@ -12,7 +12,7 @@ parameters:
   optimizer:
     values: ["adam", "sgd"]
   batch_size:
-    values: [4, 16]
+    values: [4, 16, 32]
   kernel_size:
     values: [3, 5]
   loss_function:

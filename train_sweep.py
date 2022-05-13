@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import wandb
 import yaml
 
-from models.model import DeblurModel
+from model.model import DeblurModel
 
 
 def sweep():
@@ -22,7 +22,6 @@ def sweep():
             checkpoints=False,
             train=True,
             test=False,
-            visualize=False,
             save_after_train=True,
             epoch_visualization=True,
             tensorboard=False,
@@ -77,7 +76,7 @@ if __name__ == "__main__":
             parsed_yaml = yaml.safe_load(stream)
             print(parsed_yaml)
             sweep_id = wandb.sweep(parsed_yaml, entity="xkrajkovic", project="bp_deblur")
-            count = 10  # number of runs to execute
+            count = 40  # number of runs to execute
             wandb.agent(sweep_id, function=sweep, count=count)
         except yaml.YAMLError as exc:
             print(exc)
